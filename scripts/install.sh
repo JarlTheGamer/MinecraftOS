@@ -1,160 +1,159 @@
 #!/bin/bash
 
-# MinecraftOS Installation Script
-# This script installs the MinecraftOS system on a fresh Linux installation
+# This script installs MinecraftOS and its dependencies.
 
-# Exit on error
-set -e
+# Update package lists
+echo "Updating package lists..."
+apt update
 
-echo "====================================="
-echo "MinecraftOS Installation"
-echo "====================================="
+# Install required packages
+echo "Installing required packages..."
+apt install -y git screen unzip openjdk-17-jre-headless
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-  echo "Please run as root"
-  exit 1
-fi
+# Create Minecraft directory
+echo "Creating Minecraft directory..."
+mkdir -p /opt/minecraft
 
-# Update system
-echo "Updating system packages..."
-apt-get update
-apt-get upgrade -y
+# Download and install Paperclip (Paper fork)
+echo "Downloading and installing Paperclip..."
+cd /opt/minecraft
+wget -q https://api.papermc.io/v2/projects/paper/versions/1.20.4/builds/809/downloads/paper-1.20.4-809.jar -O paper.jar
 
-# Install dependencies
-echo "Installing dependencies..."
-apt-get install -y curl wget git unzip zip openjdk-17-jre-headless nginx nodejs npm
-
-# Create directory structure
-echo "Creating directory structure..."
-mkdir -p /opt/minecraft/servers
-mkdir -p /opt/minecraft/backups
-mkdir -p /opt/minecraft/downloads
-mkdir -p /opt/minecraft/web
-
-# Set up web server
-echo "Setting up web server..."
-cat > /etc/nginx/sites-available/minecraft << EOF
-server {
-    listen 80;
-    server_name _;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-}
+# Create server.properties file
+echo "Creating server.properties file..."
+cat > server.properties << EOF
+#Minecraft server properties
+#Generated $(date)
+enable-jmx-monitoring=false
+rcon.port=25575
+level-seed=
+gamemode=survival
+enable-command-block=false
+enable-query=false
+generator-settings={}
+enforce-secure-profile=true
+level-name=world
+motd=A MinecraftOS Server
+query.port=25565
+pvp=true
+generate-structures=true
+max-chained-neighbor-updates=1000000
+difficulty=easy
+network-compression-threshold=256
+max-tick-time=60000
+require-resource-pack=false
+use-native-transport=true
+max-players=20
+online-mode=true
+enable-status=true
+allow-flight=false
+broadcast-rcon-to-ops=true
+view-distance=10
+server-ip=
+resource-pack-prompt=
+allow-nether=true
+server-port=25565
+enable-rcon=false
+sync-chunk-writes=true
+op-permission-level=4
+prevent-proxy-connections=false
+hide-online-players=false
+resource-pack=
+entity-broadcast-range-percentage=100
+simulation-distance=10
+rcon.password=
+player-idle-timeout=0
+force-gamemode=false
+rate-limit=0
+hardcore=false
+white-list=false
+broadcast-console-to-ops=true
+spawn-npcs=true
+spawn-animals=true
+snooper-enabled=true
+resource-pack-sha1=
+level-type=default
+spawn-monsters=true
+enforce-whitelist=false
+spawn-protection=16
+max-world-size=29999984
 EOF
 
-ln -sf /etc/nginx/sites-available/minecraft /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-systemctl restart nginx
+# Create eula.txt file
+echo "Creating eula.txt file..."
+echo "eula=true" > eula.txt
+
+# Create start.sh script
+echo "Creating start.sh script..."
+cat > start.sh << EOF
+#!/bin/bash
+while true; do
+  java -Xms2G -Xmx4G -jar paper.jar nogui
+  echo "Server crashed. Restarting in 5 seconds..."
+  sleep 5
+done
+EOF
+chmod +x start.sh
 
 # Clone the MinecraftOS web interface
 echo "Setting up MinecraftOS web interface..."
 cd /opt/minecraft/web
-git clone https://github.com/minecraft-os/web-interface.git .
+git clone https://github.com/JarlTheGamer/MinecraftOS.git . || {
+  echo "GitHub repository not available, creating placeholder web interface"
+  mkdir -p /opt/minecraft/web
+  cat > /opt/minecraft/web/package.json << EOF
+{
+  "name": "minecraft-os",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "^13.4.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}
+EOF
+}
+
+# Install nodejs and npm
+echo "Installing nodejs and npm..."
+apt install -y nodejs npm
+
+# Install web interface dependencies
+echo "Installing web interface dependencies..."
+cd /opt/minecraft/web
 npm install
+
+# Build web interface
+echo "Building web interface..."
 npm run build
 
-# Create systemd service for web interface
-cat > /etc/systemd/system/minecraft-web.service << EOF
+# Create systemd service file
+echo "Creating systemd service file..."
+cat > /etc/systemd/system/minecraft.service << EOF
 [Unit]
-Description=MinecraftOS Web Interface
+Description=Minecraft Server
 After=network.target
 
 [Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/minecraft/web
-ExecStart=/usr/bin/npm start
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Create systemd service for auto-start
-cat > /etc/systemd/system/minecraft-autostart.service << EOF
-[Unit]
-Description=MinecraftOS Auto-Start Service
-After=network.target
-
-[Service]
-Type=simple
-User=root
 WorkingDirectory=/opt/minecraft
-ExecStart=/opt/minecraft/scripts/autostart.sh
-Restart=on-failure
+User=root
+Group=root
+Restart=always
+ExecStart=/opt/minecraft/start.sh
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Create auto-start script
-mkdir -p /opt/minecraft/scripts
-cat > /opt/minecraft/scripts/autostart.sh << EOF
-#!/bin/bash
-# This script starts all Minecraft servers marked for auto-start
+# Enable and start the Minecraft server
+echo "Enabling and starting the Minecraft server..."
+systemctl enable minecraft.service
+systemctl start minecraft.service
 
-for SERVER_DIR in /opt/minecraft/servers/*/; do
-  CONFIG_FILE="\${SERVER_DIR}server.json"
-  if [ -f "\$CONFIG_FILE" ]; then
-    AUTO_START=\$(grep -o '"autoStart":[^,}]*' "\$CONFIG_FILE" | grep -o 'true\|false')
-    if [ "\$AUTO_START" = "true" ]; then
-      SERVER_ID=\$(basename "\$SERVER_DIR")
-      echo "Auto-starting server \$SERVER_ID"
-      /opt/minecraft/scripts/start-server.sh "\$SERVER_ID"
-    fi
-  fi
-done
-EOF
-
-# Create server management scripts
-cat > /opt/minecraft/scripts/start-server.sh << EOF
-#!/bin/bash
-# Start a Minecraft server
-
-SERVER_ID="\$1"
-if [ -z "\$SERVER_ID" ]; then
-  echo "Usage: \$0 <server_id>"
-  exit 1
-fi
-
-SERVER_DIR="/opt/minecraft/servers/\$SERVER_ID"
-CONFIG_FILE="\${SERVER_DIR}/server.json"
-
-if [ ! -f "\$CONFIG_FILE" ]; then
-  echo "Server configuration not found"
-  exit 1
-fi
-
-MEMORY=\$(grep -o '"memory":[^,}]*' "\$CONFIG_FILE" | grep -o '[0-9]*')
-JAR_FILE=\$(grep -o '"jarFile":"[^"]*"' "\$CONFIG_FILE" | cut -d'"' -f4)
-
-cd "\$SERVER_DIR"
-nohup java -Xmx\${MEMORY}M -Xms\$((\$MEMORY / 2))M -jar "\$JAR_FILE" nogui > logs/latest.log 2>&1 &
-echo \$! > server.pid
-echo "Server \$SERVER_ID started"
-EOF
-
-# Make scripts executable
-chmod +x /opt/minecraft/scripts/*.sh
-
-# Enable services
-systemctl enable minecraft-web
-systemctl enable minecraft-autostart
-
-# Start services
-systemctl start minecraft-web
-
-echo "====================================="
-echo "MinecraftOS Installation Complete!"
-echo "====================================="
-echo "Access the web interface at http://your-server-ip"
-echo "Default login: admin / minecraft"
-echo "====================================="
+echo "MinecraftOS installation complete!"
