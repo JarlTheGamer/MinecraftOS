@@ -10,6 +10,7 @@ import { RemoteAccessSetup } from "@/components/remote-access-setup"
 import { SystemInfo } from "@/components/system-info"
 import { NetworkSettings } from "@/components/network-settings"
 import { ServerDownloader } from "@/components/server-downloader"
+import { SystemUpdate } from "@/components/system-update"
 import { useToast } from "@/hooks/use-toast"
 
 export default function Home() {
@@ -414,6 +415,10 @@ export default function Home() {
           {activeTab === "system" && (
             <div className="space-y-6">
               <h2 className="text-2xl font-bold">System Information</h2>
+
+              {/* Voeg de SystemUpdate component toe */}
+              <SystemUpdate />
+
               <Card className="bg-slate-900 border-slate-800">
                 <CardContent className="p-6">
                   <div className="grid grid-cols-2 gap-6">
